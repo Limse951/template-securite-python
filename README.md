@@ -1,29 +1,23 @@
-# Template code Sécurité Python
+# TP3 - Sécurité Python
 
-## Description
+Le but du TP est de récupérer deux flags avec Python.
 
-Projet contenant les modèles de TP pour le cours de sécurité Python de 4e année de l'ESGI.
+Le programme cherche une page cachée, lit un CAPTCHA avec Tesseract, récupère le premier flag puis se connecte en TCP pour trouver le deuxième.
 
 ## Installation
 
-Faire un fork puis un clone du projet :
+Il faut Python, Poetry et Tesseract.
 
-```bash
-git clone git@github.com:<VotreNom>/template-securite-python.git
-```
+`poetry install`
 
-Installer les dépendances :
+## Lancement
 
-```bash
-cd template-securite-python
-poetry lock
-poetry install
-```
+`poetry run python -m tp3.main --target http://localhost:8080`
 
-## Utilisation
+## Tests
 
-Lancer le projet :
+`poetry run pytest tests/tp3 -v`
 
-```bash
-poetry run tp1
-```
+`poetry run ruff check src/tp3 tests/tp3`
+
+Le programme a été testé en local et sur une instance distante. Les deux flags ont été récupérés.
