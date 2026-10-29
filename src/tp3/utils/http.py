@@ -1,4 +1,4 @@
-"""Découverte HTTP avec session et reconnaissance des formulaires."""
+"""Gestion des requêtes HTTP, du fuzzing et du CAPTCHA."""
 
 import logging
 from pathlib import Path
@@ -8,84 +8,141 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from tp3.utils.captcha import solve_captcha
-from tp3.utils.parsing import extract_flag
 
 logger = logging.getLogger(__name__)
+
 WORDLIST = Path(__file__).parent / "wordlist.txt"
 
 
 class HttpError(RuntimeError):
-    """Échec d'une interaction avec la cible HTTP."""
+    """Erreur pendant une requête HTTP."""
 
 
 def fetch(session: requests.Session, url: str) -> requests.Response:
-    """Effectuer un GET en conservant les cookies."""
+    """Envoyer une requête GET au serveur."""
+
     try:
         return session.get(url, timeout=4)
+
     except requests.RequestException as error:
         raise HttpError(f"Requête impossible : {url}") from error
 
 
 def fuzz(session: requests.Session, target: str) -> list[requests.Response]:
-    """Tester chaque chemin de la wordlist et garder les réponses utiles."""
+    """Chercher les pages accessibles avec la wordlist."""
+
     found = []
-    paths = WORDLIST.read_text(encoding="utf-8").splitlines()  # Lit la liste
+
+    paths = WORDLIST.read_text(encoding="utf-8").splitlines()
+
     for path in paths:
+
         if not path or path.startswith("#"):
             continue
+
         url = urljoin(target.rstrip("/") + "/", path.lstrip("/"))
+
         try:
             response = fetch(session, url)
+
         except HttpError as error:
             logger.debug("%s", error)
             continue
-        if response.status_code not in (404, 410):  # Garde les pages trouvées
-            logger.info("[+] Endpoint : %s (%s)", url, response.status_code)
-            found.append(response)
+
+        if response.status_code not in (404, 410):
+
+            logger.info(
+                "[+] Endpoint : %s (%s)",
+                url,
+                response.status_code,
+            )
+
+            found.append(response)  # Garde la page trouvée
+
     return found
 
 
 def _form_fields(form: Tag) -> dict[str, str]:
-    """Préparer les champs cachés et les valeurs des formulaires."""
+    """Récupérer les champs du formulaire."""
+
     return {
         field["name"]: field.get("value", "")
         for field in form.select("input[name]")
     }
 
 
-def try_captcha(session: requests.Session, response: requests.Response) -> str:
-    """Résoudre le premier formulaire accompagné d'une image CAPTCHA."""
+def try_captcha(
+    session: requests.Session,
+    response: requests.Response,
+) -> str:
+    """Lire le CAPTCHA puis envoyer la réponse."""
+
     soup = BeautifulSoup(response.text, "html.parser")
+
+    image = soup.select_one('img[src*="captcha"]')  # Cherche le CAPTCHA
+
+    if image is None:
+        return response.text
+
     for form in soup.select("form"):
-        image = form.select_one("img[src]")
-        if image is None:
-            continue
-        fields = _form_fields(form)  # Garde les champs du formulaire
+
+        fields = _form_fields(form)
+
         answer_field = next(
-            (item["name"] for item in form.select("input[name]")
-             if "captcha" in item["name"].lower()),
+            (
+                field["name"]
+                for field in form.select("input[name]")
+                if "captcha" in field["name"].lower()
+            ),
             None,
         )
-        if not answer_field:
+
+        if answer_field is None:
             continue
+
         image_url = urljoin(response.url, image["src"])
         form_url = urljoin(response.url, form.get("action", ""))
 
+        def get_image() -> bytes:
+            """Récupérer une nouvelle image CAPTCHA."""
+
+            fetch(session, response.url)  # Génère un nouveau code
+
+            return fetch(session, image_url).content
+
         def submit(answer: str) -> str:
-            """Envoyer la saisie OCR en gardant les champs existants."""
+            """Envoyer le CAPTCHA au serveur."""
+
             fields[answer_field] = answer
+
             try:
                 if form.get("method", "get").lower() == "post":
-                    result = session.post(form_url, data=fields, timeout=4)
+
+                    result = session.post(
+                        form_url,
+                        data=fields,
+                        timeout=4,
+                    )
+
                 else:
-                    result = session.get(form_url, params=fields, timeout=4)
+                    result = session.get(
+                        form_url,
+                        params=fields,
+                        timeout=4,
+                    )
+
             except requests.RequestException as error:
-                raise HttpError("Soumission CAPTCHA impossible") from error
+                raise HttpError("Erreur pendant l'envoi") from error
+
             if result.status_code >= 400:
-                return ""
-            if "captcha" in result.text.lower() and not extract_flag(result.text):
-                return ""
+                return ""  # Réponse refusée
+
             return result.text
 
-        return solve_captcha(lambda: fetch(session, image_url).content, submit)
+        return solve_captcha(
+            get_image,
+            submit,
+            attempts=5,
+        )
+
     return response.text

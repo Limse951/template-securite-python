@@ -1,4 +1,4 @@
-"""Lancement du TP3 : découverte HTTP puis résolution réseau."""
+"""Lancement du TP3 : partie Web puis partie réseau."""
 
 import argparse
 import logging
@@ -16,51 +16,82 @@ from tp3.utils.parsing import (
 )
 from tp3.utils.protocol import ProtocolError, breach_network
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("tp3.main")
 
 
 class ChallengeError(RuntimeError):
-    """Les données nécessaires au TP3 sont introuvables."""
+    """Erreur pendant la résolution du challenge."""
 
 
 def breach_web(target: str) -> tuple[str, ConnectionInfo]:
-    """Chercher le premier flag et les informations du service TCP."""
+    """Trouver la page cachée et récupérer les informations TCP."""
+
     with requests.Session() as session:
-        pages = [fetch(session, target), *fuzz(session, target)]  # Pages trouvées
-        flag = None
-        info = None
+
+        pages = [fetch(session, target), *fuzz(session, target)]
+
         for response in pages:
-            content = response.text
+
             try:
                 content = try_captcha(session, response)
+
             except (CaptchaError, HttpError) as error:
-                logger.debug("CAPTCHA ignoré : %s", error)
-            flag = flag or extract_flag(content)  # Cherche le premier flag
+                logger.warning("CAPTCHA non résolu : %s", error)
+                continue
+
+            flag = extract_flag(content)  # Cherche le premier flag
+
+            if flag is None:
+                continue
+
             try:
                 info = parse_connection(content)
-            except ParsingError:
-                continue
-            if flag and info:
-                break
-        if info is None or flag is None:
-            raise ChallengeError("Flag1 ou paramètres TCP non trouvés")
-        return flag, info
+
+            except ParsingError as error:
+                raise ChallengeError(str(error)) from error
+
+            return flag, info
+
+    raise ChallengeError("Flag1 ou paramètres TCP non trouvés")
 
 
 def main() -> int:
-    """Lire --target, exécuter la chaîne et journaliser les flags."""
+    """Lancer les étapes du TP3."""
+
     setup_logging()
-    parser = argparse.ArgumentParser(description="Solveur du TP3 ESGI")
-    parser.add_argument("--target", required=True, help="URL HTTP du conteneur")
+
+    parser = argparse.ArgumentParser(
+        description="TP3 : Web puis réseau"
+    )
+
+    parser.add_argument(
+        "--target",
+        required=True,
+        help="Adresse Web de la cible",
+    )
+
     args = parser.parse_args()
+
     try:
-        flag1, connection = breach_web(args.target)
-        logger.info("[+] FLAG1: %s", flag1)
-        final = breach_network(connection)  # Passe à la partie TCP
-        logger.info("[+] FLAG_FINAL: %s", final)
-    except (HttpError, ChallengeError, ProtocolError) as error:
+        flag, connection = breach_web(args.target)
+
+        print(f"[+] FLAG1: {flag}", flush=True)  # Affiche le premier flag
+
+        final = breach_network(connection)
+
+        print(f"[+] FLAG_FINAL: {final}", flush=True)  # Affiche le flag final
+
+    except (
+        HttpError,
+        CaptchaError,
+        ChallengeError,
+        ProtocolError,
+    ) as error:
+
         logger.error("[-] %s", error)
+
         return 1
+
     return 0
 
 

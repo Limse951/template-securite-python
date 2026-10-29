@@ -1,16 +1,17 @@
-"""Extraction du flag, de l'hôte, du port et de la clé XOR."""
+"""Extraction des flags et des informations du serveur TCP."""
 
+import json
 import re
 from dataclasses import dataclass
 
 
 class ParsingError(ValueError):
-    """Réponse serveur incomplète ou impossible à interpréter."""
+    """Erreur pendant la lecture des informations."""
 
 
 @dataclass(frozen=True)
 class ConnectionInfo:
-    """Paramètres nécessaires pour rejoindre le service TCP."""
+    """Informations pour se connecter au serveur TCP."""
 
     host: str
     port: int
@@ -18,42 +19,72 @@ class ConnectionInfo:
 
 
 def extract_flag(text: str) -> str | None:
-    """Trouver un flag ESGI au milieu d'une réponse."""
-    match = re.search(r"ESGI\{[^}\r\n]+\}", text)  # Repère le flag
+    """Chercher un flag ESGI dans une réponse."""
+
+    match = re.search(r"ESGI\{[^}\r\n]+\}", text)
+
     return match.group(0) if match else None
 
 
 def _field(text: str, names: str) -> str | None:
-    """Lire un champ JSON ou une ligne nom-valeur."""
-    pattern = rf"[\"\']?(?:{names})[\"\']?\s*[:=]\s*[\"\']?([^\s,;\"\'<>}}]+)"
-    match = re.search(pattern, text, flags=re.IGNORECASE)
+    """Récupérer la valeur d'un champ."""
+
+    pattern = rf'["\']?(?:{names})["\']?\s*[:=]\s*["\']?([^\s,;"\'<>}}]+)'
+
+    match = re.search(pattern, text, re.IGNORECASE)
+
     return match.group(1) if match else None
 
 
 def parse_connection(text: str) -> ConnectionInfo:
-    """Lire host/port/key dans du texte ou du JSON simple."""
-    host = _field(text, r"host|hostname|tcp_host|server")
-    port_text = _field(text, r"port|tcp_port")
-    key_text = _field(text, r"key|xor_key|xor|secret")
-    if not host or not port_text:
-        address = re.search(r"([\w.\-]+):(\d{2,5})", text)
-        if address:
-            host, port_text = address.groups()
-    if not host or not port_text or key_text is None:
-        raise ParsingError("Host, port ou clé XOR manquants")
+    """Récupérer l'adresse, le port et la clé XOR."""
+
     try:
-        port = int(port_text)  # Convertit le port en entier
-    except ValueError as error:
-        raise ParsingError("Port non numérique") from error
-    if not 1 <= port <= 65535:
-        raise ParsingError("Port hors limites")
-    if key_text.lower().startswith("0x"):
-        try:
-            value = bytes.fromhex(key_text[2:])  # Lit la clé en hexadécimal
-        except ValueError as error:
-            raise ParsingError("Clé hexadécimale invalide") from error
+        data = json.loads(text)
+
+    except json.JSONDecodeError:
+        data = None
+
+    if isinstance(data, dict):
+
+        host = data.get("host")
+        port = data.get("port")
+        key_text = data.get("key")
+
     else:
-        value = key_text.encode("utf-8")
-    if not value:
+
+        host = _field(text, r"tcp_host|hostname|host|server")
+        port = _field(text, r"tcp_port|port")
+        key_text = _field(text, r"xor_key|key|xor|secret")
+
+    if not host or port is None or not key_text:
+        raise ParsingError("Hôte, port ou clé XOR manquants")
+
+    try:
+        port_number = int(port)  # Convertit le port en entier
+
+    except (ValueError, TypeError) as error:
+        raise ParsingError("Port TCP invalide") from error
+
+    if not 1 <= port_number <= 65535:
+        raise ParsingError("Port TCP hors limites")
+
+    key_string = str(key_text)
+
+    if key_string.lower().startswith("0x"):
+        key_string = key_string[2:]
+
+    try:
+        key = bytes.fromhex(key_string)  # Convertit la clé hexadécimale
+
+    except ValueError as error:
+        raise ParsingError("Clé XOR hexadécimale invalide") from error
+
+    if not key:
         raise ParsingError("Clé XOR vide")
-    return ConnectionInfo(host, port, value)
+
+    return ConnectionInfo(
+        str(host),
+        port_number,
+        key,
+    )
