@@ -27,11 +27,9 @@ def breach_web(target: str) -> tuple[str, ConnectionInfo]:
     """Trouver la page cachée et récupérer les informations TCP."""
 
     with requests.Session() as session:
-
         pages = [fetch(session, target), *fuzz(session, target)]
 
         for response in pages:
-
             try:
                 content = try_captcha(session, response)
 
@@ -39,7 +37,7 @@ def breach_web(target: str) -> tuple[str, ConnectionInfo]:
                 logger.warning("CAPTCHA non résolu : %s", error)
                 continue
 
-            flag = extract_flag(content)  # Cherche le premier flag
+            flag = extract_flag(content)
 
             if flag is None:
                 continue
@@ -75,11 +73,11 @@ def main() -> int:
     try:
         flag, connection = breach_web(args.target)
 
-        print(f"[+] FLAG1: {flag}", flush=True)  # Affiche le premier flag
+        logger.info("[+] FLAG1: %s", flag)
 
         final = breach_network(connection)
 
-        print(f"[+] FLAG_FINAL: {final}", flush=True)  # Affiche le flag final
+        logger.info("[+] FLAG_FINAL: %s", final)
 
     except (
         HttpError,
@@ -87,9 +85,7 @@ def main() -> int:
         ChallengeError,
         ProtocolError,
     ) as error:
-
         logger.error("[-] %s", error)
-
         return 1
 
     return 0
